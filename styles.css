@@ -1,6 +1,6 @@
 /* ============================================================
    GROWING PLANTS IN SIMULATED MICROGRAVITY
-   Enhanced with visual plant cards, zoom controls
+   Enhanced with visual plant cards, zoom controls, gravity buttons
    ============================================================ */
 
 :root {
@@ -464,6 +464,69 @@ section { padding: 3rem 0; }
     font-size: 0.75rem;
     color: var(--text-muted);
     line-height: 1.3;
+}
+
+/* ============================================================
+   GRAVITY BUTTONS — Two separate interactive panels
+   ============================================================ */
+.gravity-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.gravity-btn {
+    padding: 12px 10px;
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    cursor: pointer;
+    transition: all var(--transition);
+    text-align: center;
+    font-family: var(--font-body);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.gravity-btn:hover {
+    border-color: var(--primary);
+    background: var(--surface);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px var(--shadow);
+}
+
+.gravity-btn.active {
+    border-color: var(--primary);
+    background: var(--primary);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.gravity-btn.active .gravity-btn-label,
+.gravity-btn.active .gravity-btn-value {
+    color: #fff;
+}
+
+.gravity-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.gravity-btn-label {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: var(--text);
+}
+
+.gravity-btn-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary);
+    font-family: var(--font-mono);
+}
+
+.gravity-btn.active .gravity-btn-value {
+    color: #fff;
 }
 
 /* ============================================================
