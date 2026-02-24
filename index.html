@@ -32,16 +32,14 @@
         </div>
     </nav>
 
-    <!-- ============================================================
-         ANIMATED SPACE-THEMED HERO
-    ============================================================ -->
+    <!-- ANIMATED SPACE HERO -->
     <section id="overview" class="hero-section">
         <canvas id="spaceCanvas" class="space-canvas"></canvas>
         <div class="nebula-glow"></div>
         <div class="container hero-content">
             <div class="hero-badge fade-in-delay-1">Educational Science Project</div>
             <h1 class="project-title fade-in-delay-2">Growing Plants in Simulated Microgravity</h1>
-            <p class="subtitle fade-in-delay-3">Realistic Tropism Physics</p>
+            <p class="subtitle fade-in-delay-3">Continuous Differential Growth Model</p>
             <div class="creator-hero fade-in-delay-4">Created by Tianlang Liu and Ken Yang</div>
             <div class="key-question fade-in-delay-5">
                 <strong>Central Question:</strong> How does the absence or reduction of gravity change
@@ -50,9 +48,7 @@
         </div>
     </section>
 
-    <!-- ============================================================
-         BACKGROUND SCIENCE
-    ============================================================ -->
+    <!-- BACKGROUND SCIENCE -->
     <section id="background" class="background-section">
         <div class="container">
             <h2 class="section-title">Background Science</h2>
@@ -60,7 +56,6 @@
                 is essential for space agriculture and long-duration missions.</p>
 
             <div class="accordion">
-
                 <div class="accordion-item">
                     <button class="accordion-header">
                         <span class="accordion-title">What is Gravitropism?</span>
@@ -110,14 +105,11 @@
                         </div>
                     </div>
                 </div>
-
             </div>
         </div>
     </section>
 
-    <!-- ============================================================
-         INTERACTIVE SIMULATION
-    ============================================================ -->
+    <!-- INTERACTIVE SIMULATION -->
     <section id="simulation" class="simulation-section">
         <div class="container">
             <h2 class="section-title">Interactive Plant Growth Simulation</h2>
@@ -152,14 +144,19 @@
                         </div>
                     </div>
 
+                    <!-- Gravity selection — two separate buttons -->
                     <div class="control-group">
-                        <label for="gravitySelect">Gravity Environment</label>
-                        <select id="gravitySelect" class="control-select">
-                            <option value="1">Earth (1.0 g)</option>
-                            <option value="0.38">Mars (0.38 g)</option>
-                            <option value="0.16">Moon (0.16 g)</option>
-                            <option value="0" selected>Microgravity (0 g)</option>
-                        </select>
+                        <label class="control-label">Gravity Environment</label>
+                        <div class="gravity-buttons">
+                            <button class="gravity-btn" data-gravity="1">
+                                <div class="gravity-btn-label">Earth Gravity</div>
+                                <div class="gravity-btn-value">1.0 g</div>
+                            </button>
+                            <button class="gravity-btn active" data-gravity="0">
+                                <div class="gravity-btn-label">Microgravity</div>
+                                <div class="gravity-btn-value">0.0 g</div>
+                            </button>
+                        </div>
                     </div>
 
                     <div class="control-group">
@@ -175,13 +172,6 @@
                             <button class="light-btn" data-direction="bottom">Bottom</button>
                             <div></div>
                         </div>
-                    </div>
-
-                    <div class="control-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="compareMode">
-                            <span>Compare to Earth Gravity</span>
-                        </label>
                     </div>
 
                     <div class="control-group experiment-btns">
@@ -230,9 +220,7 @@
         </div>
     </section>
 
-    <!-- ============================================================
-         DATA AND ANALYSIS
-    ============================================================ -->
+    <!-- DATA AND ANALYSIS -->
     <section id="data" class="data-section">
         <div class="container">
             <h2 class="section-title">Data &amp; Analysis</h2>
