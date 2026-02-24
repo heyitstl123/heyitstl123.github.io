@@ -1,90 +1,102 @@
 /* ============================================================
-   GROWING PLANTS IN SIMULATED MICROGRAVITY
-   Biologically realistic differential elongation model
-   - No mechanical rotation
+   GROWING PLANTS IN SIMULATED MICROGRAVITY — script.js
+   
+   CONTINUOUS PARENT-CHILD SEGMENT CHAIN MODEL
+   ============================================
+   
+   Structure:
+   - Each segment has a parent reference (except root segments)
+   - Position: computed from parent.endX, parent.endY (ensures continuity)
+   - Angle: cumulative from parent chain (parent.angle + this.angleOffset)
+   - No rigid rotation — curvature emerges from cumulative small angle offsets
+   
+   Growth Mechanism:
+   - Segments grow via logistic function: dL = r·L·(1 - L/K)
+   - Tropism forces adjust angleOffset by tiny amounts each frame (~0.0025)
+   - Gravitropism: shoots curve up (−π/2), roots curve down (π/2)
+   - Phototropism: shoots toward light, roots away from light
+   - Effects compound gradually over hundreds of frames
+   
+   Result: Smooth, biologically realistic curvature without visual breaks
+   
+   Features:
+   - Differential elongation (not rotation)
+   - Maturity-dependent tropism sensitivity
+   - Auto-stop at biological maximum size
    - Smooth zoom (pinch + wheel)
-   - Visual plant selection
-   - Growth stops at maturity
+   - Visual plant selection cards
+   - Two-button gravity selector (Earth 1g / Microgravity 0g)
    ============================================================ */
 
 'use strict';
 
-/* ============================================================
-   PLANT VARIETY DEFINITIONS
-   ============================================================ */
 const VARIETIES = {
     cress: {
-        label:          'Cress',
-        stemWidth:      2.2,   stemColor: '#4a7c3f',
-        maxStemLen:     240,   growthRate: 0.055,
-        branchChance:   0.28,  branchSpread: 0.60,
-        leafShape:      'oval', leafScale: 0.90, leafColor: '#5aad4e', leafSpacing: 20,
-        rootColor:      '#8B6914', rootWidth: 1.6,
+        label: 'Cress',
+        stemWidth: 2.2, stemColor: '#4a7c3f',
+        maxStemLen: 240, growthRate: 0.055,
+        branchChance: 0.28, branchSpread: 0.60,
+        leafShape: 'oval', leafScale: 0.90, leafColor: '#5aad4e', leafSpacing: 20,
+        rootColor: '#8B6914', rootWidth: 1.6,
         rootGrowthRate: 0.040, maxRootLen: 120,
     },
     bean: {
-        label:          'Bean',
-        stemWidth:      5.8,   stemColor: '#3a6e2f',
-        maxStemLen:     300,   growthRate: 0.030,
-        branchChance:   0.10,  branchSpread: 0.72,
-        leafShape:      'broad', leafScale: 2.10, leafColor: '#4d9440', leafSpacing: 36,
-        rootColor:      '#7a5510', rootWidth: 3.8,
+        label: 'Bean',
+        stemWidth: 5.8, stemColor: '#3a6e2f',
+        maxStemLen: 300, growthRate: 0.030,
+        branchChance: 0.10, branchSpread: 0.72,
+        leafShape: 'broad', leafScale: 2.10, leafColor: '#4d9440', leafSpacing: 36,
+        rootColor: '#7a5510', rootWidth: 3.8,
         rootGrowthRate: 0.025, maxRootLen: 160,
     },
     arabidopsis: {
-        label:          'Arabidopsis',
-        stemWidth:      1.7,   stemColor: '#5c8a50',
-        maxStemLen:     190,   growthRate: 0.048,
-        branchChance:   0.38,  branchSpread: 0.95,
-        leafShape:      'lance', leafScale: 0.68, leafColor: '#68b85c', leafSpacing: 15,
-        rootColor:      '#9e7e20', rootWidth: 1.1,
+        label: 'Arabidopsis',
+        stemWidth: 1.7, stemColor: '#5c8a50',
+        maxStemLen: 190, growthRate: 0.048,
+        branchChance: 0.38, branchSpread: 0.95,
+        leafShape: 'lance', leafScale: 0.68, leafColor: '#68b85c', leafSpacing: 15,
+        rootColor: '#9e7e20', rootWidth: 1.1,
         rootGrowthRate: 0.050, maxRootLen: 145,
     },
     wheat: {
-        label:          'Wheat',
-        stemWidth:      2.1,   stemColor: '#7a9040',
-        maxStemLen:     280,   growthRate: 0.042,
-        branchChance:   0.05,  branchSpread: 0.18,
-        leafShape:      'narrow', leafScale: 1.15, leafColor: '#8db855', leafSpacing: 28,
-        rootColor:      '#a08830', rootWidth: 1.5,
+        label: 'Wheat',
+        stemWidth: 2.1, stemColor: '#7a9040',
+        maxStemLen: 280, growthRate: 0.042,
+        branchChance: 0.05, branchSpread: 0.18,
+        leafShape: 'narrow', leafScale: 1.15, leafColor: '#8db855', leafSpacing: 28,
+        rootColor: '#a08830', rootWidth: 1.5,
         rootGrowthRate: 0.032, maxRootLen: 110,
     }
 };
 
-/* ============================================================
-   APPLICATION STATE
-   ============================================================ */
 const App = {
-    theme:         'light',
-    isRunning:     false,
-    isComplete:    false,
-    startTime:     null,
-    elapsedMs:     0,
-    animId:        null,
-    gravity:       0,
-    lightDir:      'none',
-    variety:       'cress',
-    compareMode:   false,
-    plant:         null,
-    comparePlant:  null,
-    dataPoints:    [],
-    compareData:   [],
+    theme: 'light',
+    isRunning: false,
+    isComplete: false,
+    startTime: null,
+    elapsedMs: 0,
+    animId: null,
+    gravity: 0,
+    lightDir: 'none',
+    variety: 'cress',
+    compareMode: false,
+    plant: null,
+    comparePlant: null,
+    dataPoints: [],
+    compareData: [],
     camera: { scale: 1, targetScale: 1, panY: 0, targetPanY: 0 },
-    zoom: { level: 1, targetLevel: 1 },  // User-controlled zoom
+    zoom: { level: 1, targetLevel: 1 },
     chartToggles: { stemLength: true, rootDepth: true }
 };
 
-/* ============================================================
-   HiDPI CANVAS HELPER
-   ============================================================ */
 function hiDPI(canvas) {
-    const dpr  = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth  || parseInt(canvas.getAttribute('width'),  10) || 800;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || parseInt(canvas.getAttribute('width'), 10) || 800;
     const cssH = canvas.clientHeight || parseInt(canvas.getAttribute('height'), 10) || 400;
     const physW = Math.round(cssW * dpr);
     const physH = Math.round(cssH * dpr);
     if (canvas.width !== physW || canvas.height !== physH) {
-        canvas.width  = physW; canvas.height = physH;
+        canvas.width = physW; canvas.height = physH;
         canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
     }
     const ctx = canvas.getContext('2d');
@@ -93,30 +105,60 @@ function hiDPI(canvas) {
 }
 
 /* ============================================================
-   SEGMENT — differential elongation model
-   Growth direction determined by tropism vectors at time of growth.
-   No rotation — only bending through incremental directional growth.
+   SEGMENT — Parent-child linked chain with cumulative angles
+   Each segment inherits its start position from parent's endpoint.
+   Angle is cumulative: parent.angle + this.angleOffset
+   This creates a continuous, biologically realistic structure.
    ============================================================ */
 class Segment {
-    constructor(x, y, angleDeg, generation, isRoot, variety) {
-        this.x = x; this.y = y;
-        this.angle      = angleDeg;   // Initial angle at birth
+    constructor(parent, isRoot, variety, generation = 0) {
+        this.parent = parent;
+        this.isRoot = isRoot;
+        this.variety = variety;
         this.generation = generation;
-        this.isRoot     = isRoot;
-        this.variety    = variety;
-
-        const v       = VARIETIES[variety];
-        const gf      = Math.pow(0.62, generation);
+        
+        const v = VARIETIES[variety];
+        const gf = Math.pow(0.62, generation);
         const baseLen = isRoot ? v.maxRootLen : v.maxStemLen;
-        this.K        = baseLen * gf * (0.85 + Math.random() * 0.30);
-        this.length   = 0.1;
-        this.growing  = true;
+        this.K = baseLen * gf * (0.85 + Math.random() * 0.30);
+        
+        this.length = 0.1;
+        this.angleOffset = 0;  // Relative to parent (cumulative)
+        this.growing = true;
         this.children = [];
         this.branched = false;
-        this.leafAt   = [];
+        this.leafAt = [];
+        
         this.baseWidth = isRoot
             ? Math.max(v.rootWidth * gf, 0.5)
             : Math.max(v.stemWidth * gf, 0.7);
+    }
+
+    // Computed angle — cumulative from entire parent chain
+    get angle() {
+        if (!this.parent) {
+            // Root segment: shoot points up (-π/2), root points down (π/2)
+            return this.isRoot ? Math.PI / 2 : -Math.PI / 2;
+        }
+        return this.parent.angle + this.angleOffset;
+    }
+
+    // Start position — exactly at parent's endpoint (ensures continuity)
+    get x() {
+        return this.parent ? this.parent.endX : 0;
+    }
+
+    get y() {
+        return this.parent ? this.parent.endY : 0;
+    }
+
+    // Endpoint of this segment
+    get endX() {
+        return this.x + this.length * Math.cos(this.angle);
+    }
+
+    get endY() {
+        return this.y + this.length * Math.sin(this.angle);
     }
 
     grow(gravity, lightDir) {
@@ -129,13 +171,17 @@ class Segment {
             this.length = Math.min(this.length + dL, this.K);
             if (this.length >= this.K * 0.995) this.growing = false;
 
-            // Apply tropism only to primary axis
-            if (this.generation === 0) this._steerGrowth(gravity, lightDir);
+            // Apply tropism to primary axis only
+            if (this.generation === 0) {
+                this._adjustAngleOffset(gravity, lightDir);
+            }
 
             // Leaf emergence
-            const spacing  = v.leafSpacing + Math.random() * 6;
+            const spacing = v.leafSpacing + Math.random() * 6;
             const lastLeaf = this.leafAt[this.leafAt.length - 1] ?? 0;
-            if (this.length - lastLeaf > spacing) this.leafAt.push(this.length);
+            if (this.length - lastLeaf > spacing) {
+                this.leafAt.push(this.length);
+            }
 
             // Probabilistic branching
             if (!this.branched && this.generation < 3 &&
@@ -144,81 +190,102 @@ class Segment {
                 this._branch(); this.branched = true;
             }
         }
+        
         for (const c of this.children) c.grow(gravity, lightDir);
     }
 
     /* ----------------------------------------------------------
-       Differential elongation via tropism steering.
-       The angle changes gradually as the segment grows —
-       simulating cell elongation on one side vs. the other.
+       Adjust angleOffset incrementally based on tropism forces.
+       Very small changes accumulate gradually for smooth curves.
     ---------------------------------------------------------- */
-    _steerGrowth(gravity, lightDir) {
+    _adjustAngleOffset(gravity, lightDir) {
         const maturity = this.length / this.K;
+        const currentAngle = this.angle;
 
-        // Gravitropism: strong early, fades as plant matures
+        // Gravitropism: shoots grow up, roots grow down
+        let gravEffect = 0;
         if (gravity > 0) {
-            const gravTarget = this.isRoot ? 90 : -90;  // down/up
-            const diff = angleDiff(gravTarget, this.angle);
-            const gravStrength = gravity * Math.max(1.25 - maturity * 0.80, 0.08);
-            this.angle += diff * gravStrength * 0.015;  // Smooth bending
+            const gravTarget = this.isRoot ? Math.PI / 2 : -Math.PI / 2;
+            const gravDiff = angleDiff(gravTarget, currentAngle);
+            const gravStrength = gravity * Math.max(1.2 - maturity * 0.75, 0.08);
+            gravEffect = gravDiff * gravStrength * 0.0025;  // Very gradual
         }
 
-        // Phototropism: weak early (cells not yet sensitive), strengthens with maturity
+        // Phototropism: shoots toward light, roots away from light
+        let photoEffect = 0;
         if (lightDir !== 'none' && maturity > 0.12) {
-            const lightDeg = dirToDeg(lightDir);
-            const target = this.isRoot ? lightDeg + 180 : lightDeg;
-            const diff = angleDiff(target, this.angle);
+            const lightAngle = dirToRad(lightDir);
+            const photoTarget = this.isRoot ? lightAngle + Math.PI : lightAngle;
+            const photoDiff = angleDiff(photoTarget, currentAngle);
             
             const photoStrength = gravity === 0
-                ? 0.75   // Immediate in microgravity
-                : 0.04 + maturity * 0.50;  // Gradual under gravity
-            this.angle += diff * photoStrength * 0.015;
+                ? 0.65   // Strong in microgravity
+                : 0.02 + maturity * 0.40;  // Increases with maturity
+            photoEffect = photoDiff * photoStrength * 0.0025;  // Very gradual
         }
 
-        // Random walk in microgravity without directional cues
+        // Random walk in microgravity with no cues
+        let randomEffect = 0;
         if (gravity === 0 && lightDir === 'none') {
-            this.angle += (Math.random() - 0.5) * 0.45;
+            randomEffect = (Math.random() - 0.5) * 0.0012;
         }
 
-        // Organic micro-drift
-        this.angle += (Math.random() - 0.5) * 0.25;
+        // Cumulative very small adjustments for smooth curvature
+        this.angleOffset += gravEffect + photoEffect + randomEffect;
+        
+        // Subtle organic micro-variation
+        this.angleOffset += (Math.random() - 0.5) * 0.0008;
     }
 
     _branch() {
-        const v   = VARIETIES[this.variety];
-        const tip = this.tip();
-        const s   = Math.random() < 0.5 ? 1 : -1;
-        const a1  = this.angle + s * (v.branchSpread * 0.55 + Math.random() * v.branchSpread * 0.35);
-        this.children.push(new Segment(tip.x, tip.y, a1, this.generation + 1, this.isRoot, this.variety));
-        if (this.generation === 0 && Math.random() < 0.55) {
-            const a2 = this.angle - s * (v.branchSpread * 0.45 + Math.random() * v.branchSpread * 0.35);
-            this.children.push(new Segment(tip.x, tip.y, a2, this.generation + 1, this.isRoot, this.variety));
+        const v = VARIETIES[this.variety];
+        const side = Math.random() < 0.5 ? 1 : -1;
+        // Branch angle in radians, starting with modest offset
+        const branchAngle = side * (v.branchSpread * 0.45 + Math.random() * v.branchSpread * 0.30) * Math.PI / 180;
+        
+        const branch = new Segment(this, this.isRoot, this.variety, this.generation + 1);
+        branch.angleOffset = branchAngle;  // Initial offset from parent
+        this.children.push(branch);
+        
+        // Occasionally create opposite branch (for gen 0 only)
+        if (this.generation === 0 && Math.random() < 0.50) {
+            const branch2 = new Segment(this, this.isRoot, this.variety, this.generation + 1);
+            branch2.angleOffset = -branchAngle;  // Mirror angle
+            this.children.push(branch2);
         }
     }
 
-    tip() {
-        const rad = this.angle * Math.PI / 180;
-        return { x: this.x + Math.cos(rad) * this.length,
-                 y: this.y + Math.sin(rad) * this.length };
+    totalLength() {
+        return this.length + this.children.reduce((s, c) => s + c.totalLength(), 0);
     }
 
-    totalLength()  { return this.length + this.children.reduce((s, c) => s + c.totalLength(), 0); }
-    branchCount()  { return this.children.length + this.children.reduce((s, c) => s + c.branchCount(), 0); }
-    isFullyGrown() { return !this.growing && this.children.every(c => c.isFullyGrown()); }
+    branchCount() {
+        return this.children.length + this.children.reduce((s, c) => s + c.branchCount(), 0);
+    }
+
+    isFullyGrown() {
+        return !this.growing && this.children.every(c => c.isFullyGrown());
+    }
 }
 
 /* ============================================================
-   PLANT CLASS
+   PLANT — unified shoot and root from single seed point
+   Both structures share origin (0, 0) and form continuous chains.
    ============================================================ */
 class Plant {
     constructor(variety, gravity, lightDir) {
         this.variety = variety;
-        this.age     = 0;
-        const jitter     = (Math.random() - 0.5) * 10;
-        const shootStart = gravity > 0 ? -90 + jitter : (Math.random() * 360);
-        const rootStart  = gravity > 0 ?  90 + jitter : (shootStart + 180) % 360;
-        this.shoot = new Segment(0, 0, shootStart, 0, false, variety);
-        this.root  = new Segment(0, 0, rootStart,  0, true,  variety);
+        this.age = 0;
+        
+        // Both shoot and root start at origin with parent = null
+        // This means they use their default base angles: shoot = -π/2 (up), root = π/2 (down)
+        this.shoot = new Segment(null, false, variety, 0);
+        this.root = new Segment(null, true, variety, 0);
+        
+        // Add minimal initial angle variation (< 0.2 radians)
+        const jitter = (Math.random() - 0.5) * 0.18;
+        this.shoot.angleOffset = jitter;
+        this.root.angleOffset = jitter;
     }
 
     update(gravity, lightDir) {
@@ -231,7 +298,7 @@ class Plant {
     bounds() {
         const pts = [];
         collectPts(this.shoot, pts);
-        collectPts(this.root,  pts);
+        collectPts(this.root, pts);
         if (!pts.length) return { minX: -20, maxX: 20, minY: -20, maxY: 20 };
         return {
             minX: Math.min(...pts.map(p => p.x)), maxX: Math.max(...pts.map(p => p.x)),
@@ -239,11 +306,13 @@ class Plant {
         };
     }
 
-    isFullyGrown() { return this.shoot.isFullyGrown() && this.root.isFullyGrown(); }
+    isFullyGrown() {
+        return this.shoot.isFullyGrown() && this.root.isFullyGrown();
+    }
 }
 
 /* ============================================================
-   ANIMATED STAR FIELD + SHOOTING STARS
+   STAR FIELD
    ============================================================ */
 function initStarField() {
     const canvas = el('spaceCanvas');
@@ -263,7 +332,6 @@ function initStarField() {
         });
     }
 
-    // Shooting stars
     const shooters = [];
     let nextShooter = Date.now() + randBetween(12000, 24000);
 
@@ -281,7 +349,6 @@ function initStarField() {
         const dt = now - lastT; lastT = now;
         ctx.clearRect(0, 0, W, H);
 
-        // Static stars
         stars.forEach(s => {
             s.y += s.speed;
             if (s.y > H + 10) { s.y = -10; s.x = Math.random() * W; }
@@ -291,7 +358,6 @@ function initStarField() {
             ctx.beginPath(); ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2); ctx.fill();
         });
 
-        // Shooting stars
         if (now >= nextShooter) {
             spawnShooter();
             nextShooter = now + randBetween(12000, 24000);
@@ -311,7 +377,6 @@ function initStarField() {
                 shooters.splice(i, 1); continue;
             }
 
-            // Trail gradient
             if (sh.tail.length > 1) {
                 const grad = ctx.createLinearGradient(
                     sh.tail[0].x * W, sh.tail[0].y * H, sh.x * W, sh.y * H
@@ -326,7 +391,6 @@ function initStarField() {
                 ctx.stroke();
             }
 
-            // Head glow
             const headGrad = ctx.createRadialGradient(sh.x * W, sh.y * H, 0, sh.x * W, sh.y * H, 5);
             headGrad.addColorStop(0, `rgba(220,235,255,${(alpha * 0.9).toFixed(3)})`);
             headGrad.addColorStop(1, 'rgba(180,210,255,0)');
@@ -342,22 +406,20 @@ function initStarField() {
 function randBetween(a, b) { return a + Math.random() * (b - a); }
 
 /* ============================================================
-   ZOOM CONTROLS (Pinch + Wheel)
+   ZOOM CONTROLS
    ============================================================ */
 function initZoom() {
     const canvas = el('clinostatCanvas');
     if (!canvas) return;
 
-    // Mouse wheel zoom
     canvas.addEventListener('wheel', e => {
-        if (e.ctrlKey) return;  // Browser pinch-zoom
+        if (e.ctrlKey) return;
         e.preventDefault();
         const delta = e.deltaY < 0 ? 0.1 : -0.1;
         App.zoom.targetLevel = Math.max(0.5, Math.min(3.0, App.zoom.targetLevel + delta));
         setVal('zoomVal', Math.round(App.zoom.targetLevel * 100) + '%');
     }, { passive: false });
 
-    // Touch pinch zoom
     let touches = [];
     canvas.addEventListener('touchstart', e => {
         if (e.touches.length === 2) {
@@ -383,7 +445,7 @@ function initZoom() {
 }
 
 /* ============================================================
-   SIMULATION CANVAS RENDER
+   RENDERING
    ============================================================ */
 function renderCanvas() {
     const canvas = el('clinostatCanvas');
@@ -412,7 +474,6 @@ function renderCanvas() {
 
     const cx = W / 2, cy = H * 0.57;
 
-    // Auto-zoom to fit plant
     if (App.plant) {
         const b = App.plant.bounds();
         const bW = b.maxX - b.minX + 80, bH = b.maxY - b.minY + 80;
@@ -420,9 +481,7 @@ function renderCanvas() {
         App.camera.targetPanY = (b.minY + b.maxY) / 2;
     }
     App.camera.scale += (App.camera.targetScale - App.camera.scale) * 0.035;
-    App.camera.panY  += (App.camera.targetPanY  - App.camera.panY)  * 0.035;
-
-    // User zoom lerp
+    App.camera.panY += (App.camera.targetPanY - App.camera.panY) * 0.035;
     App.zoom.level += (App.zoom.targetLevel - App.zoom.level) * 0.08;
 
     ctx.save();
@@ -441,7 +500,6 @@ function renderCanvas() {
 
     ctx.restore();
 
-    // Variety label
     ctx.fillStyle = isDark ? 'rgba(255,255,255,0.38)' : 'rgba(0,0,0,0.28)';
     ctx.font = '12px system-ui'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
     ctx.fillText(VARIETIES[App.variety].label, W - 12, H - 10);
@@ -450,28 +508,40 @@ function renderCanvas() {
 function drawSegment(ctx, seg) {
     if (seg.length < 1) return;
     const v = VARIETIES[seg.variety];
-    const rad = seg.angle * Math.PI / 180;
     const col = seg.isRoot ? v.rootColor : v.stemColor;
     const endW = Math.max(seg.baseWidth * 0.35, 0.4);
 
-    // Tapered segments
-    const steps = Math.max(Math.floor(seg.length / 6), 2);
+    // Draw continuous tapered segment from (x, y) to (endX, endY)
+    // x, y is parent's endpoint; endX, endY is this segment's endpoint
+    const steps = Math.max(Math.floor(seg.length / 5), 3);  // More steps = smoother
     for (let i = 0; i < steps; i++) {
         const t0 = i / steps, t1 = (i + 1) / steps;
+        
+        // Linear interpolation along the segment
+        const x0 = seg.x + (seg.endX - seg.x) * t0;
+        const y0 = seg.y + (seg.endY - seg.y) * t0;
+        const x1 = seg.x + (seg.endX - seg.x) * t1;
+        const y1 = seg.y + (seg.endY - seg.y) * t1;
+        
+        // Taper from base width to end width
         ctx.strokeStyle = col;
         ctx.lineWidth = seg.baseWidth * (1 - t0) + endW * t0;
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';  // Smooth joins
         ctx.beginPath();
-        ctx.moveTo(seg.x + Math.cos(rad) * seg.length * t0, seg.y + Math.sin(rad) * seg.length * t0);
-        ctx.lineTo(seg.x + Math.cos(rad) * seg.length * t1, seg.y + Math.sin(rad) * seg.length * t1);
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
         ctx.stroke();
     }
 
-    // Leaves (shoots only)
+    // Leaves positioned along the segment
     if (!seg.isRoot) {
         seg.leafAt.forEach((lp, idx) => {
             if (lp > seg.length) return;
-            drawLeaf(ctx, seg.x + Math.cos(rad) * lp, seg.y + Math.sin(rad) * lp, seg.angle, idx % 2 === 0 ? 1 : -1, v);
+            const t = lp / seg.length;
+            const lx = seg.x + (seg.endX - seg.x) * t;
+            const ly = seg.y + (seg.endY - seg.y) * t;
+            drawLeaf(ctx, lx, ly, seg.angle * 180 / Math.PI, idx % 2 === 0 ? 1 : -1, v);
         });
     }
 
@@ -479,15 +549,18 @@ function drawSegment(ctx, seg) {
     if (seg.isRoot && seg.generation === 0) {
         ctx.strokeStyle = v.rootColor + '70'; ctx.lineWidth = 0.6;
         for (let d = 12; d < seg.length; d += 13) {
+            const t = d / seg.length;
+            const hx = seg.x + (seg.endX - seg.x) * t;
+            const hy = seg.y + (seg.endY - seg.y) * t;
             for (const s of [1, -1]) {
-                const hx = seg.x + Math.cos(rad) * d, hy = seg.y + Math.sin(rad) * d;
-                const ha = rad + s * (Math.PI / 2 + (Math.random() - 0.5) * 0.3);
+                const ha = seg.angle + s * (Math.PI / 2 + (Math.random() - 0.5) * 0.3);
                 ctx.beginPath(); ctx.moveTo(hx, hy);
                 ctx.lineTo(hx + Math.cos(ha) * 6, hy + Math.sin(ha) * 6); ctx.stroke();
             }
         }
     }
 
+    // Recursively draw all children (which start at this segment's endpoint)
     for (const c of seg.children) drawSegment(ctx, c);
 }
 
@@ -495,10 +568,10 @@ function drawLeaf(ctx, x, y, angleDeg, side, v) {
     const la = (angleDeg + side * 72) * Math.PI / 180;
     const ls = v.leafScale;
     let rx, ry;
-    if      (v.leafShape === 'broad')  { rx = ls * 13; ry = ls * 6.5; }
+    if (v.leafShape === 'broad') { rx = ls * 13; ry = ls * 6.5; }
     else if (v.leafShape === 'narrow') { rx = ls * 19; ry = ls * 3.2; }
-    else if (v.leafShape === 'lance')  { rx = ls * 11; ry = ls * 4.0; }
-    else                               { rx = ls * 10; ry = ls * 5.5; }
+    else if (v.leafShape === 'lance') { rx = ls * 11; ry = ls * 4.0; }
+    else { rx = ls * 10; ry = ls * 5.5; }
     ctx.fillStyle = v.leafColor; ctx.strokeStyle = v.stemColor + '99'; ctx.lineWidth = 0.6;
     ctx.beginPath();
     ctx.ellipse(x + Math.cos(la) * rx * 0.65, y + Math.sin(la) * ry * 0.65, rx, ry, la, 0, Math.PI * 2);
@@ -507,10 +580,10 @@ function drawLeaf(ctx, x, y, angleDeg, side, v) {
 
 function drawLightOverlay(ctx, W, H, dir) {
     const pos = {
-        top:    { x: W / 2,  y: 28,     nx: 0,  ny: 1  },
-        bottom: { x: W / 2,  y: H - 28, nx: 0,  ny: -1 },
-        left:   { x: 28,     y: H / 2,  nx: 1,  ny: 0  },
-        right:  { x: W - 28, y: H / 2,  nx: -1, ny: 0  },
+        top: { x: W / 2, y: 28, nx: 0, ny: 1 },
+        bottom: { x: W / 2, y: H - 28, nx: 0, ny: -1 },
+        left: { x: 28, y: H / 2, nx: 1, ny: 0 },
+        right: { x: W - 28, y: H / 2, nx: -1, ny: 0 },
     }[dir];
     if (!pos) return;
 
@@ -625,7 +698,7 @@ function diagramPhototropism() {
 }
 
 /* ============================================================
-   CHART (Stem Length + Root Depth only)
+   CHART
    ============================================================ */
 function drawChart() {
     const canvas = el('growthChart');
@@ -658,7 +731,6 @@ function drawChart() {
     const sx = t => m.left + (t / maxT) * cW;
     const sy = l => H - m.bottom - (l / maxL) * cH;
 
-    // Grid
     for (let i = 0; i <= 5; i++) {
         const y = m.top + (i / 5) * cH;
         ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
@@ -669,7 +741,6 @@ function drawChart() {
         ctx.fillText(((1 - i / 5) * maxL).toFixed(0), m.left - 8, y);
     }
 
-    // Axes
     ctx.strokeStyle = isDark ? '#475569' : '#cbd5e1'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(m.left, m.top); ctx.lineTo(m.left, H - m.bottom); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(m.left, H - m.bottom); ctx.lineTo(W - m.right, H - m.bottom); ctx.stroke();
@@ -680,7 +751,6 @@ function drawChart() {
 
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
 
-    // Main data
     if (hasData) {
         if (App.chartToggles.stemLength) {
             ctx.strokeStyle = '#228B22'; ctx.lineWidth = 2.5;
@@ -701,7 +771,6 @@ function drawChart() {
         }
     }
 
-    // Comparison (dashed)
     if (hasCompare) {
         ctx.setLineDash([5, 3]);
         if (App.chartToggles.stemLength) {
@@ -723,7 +792,6 @@ function drawChart() {
         ctx.setLineDash([]);
     }
 
-    // Legend
     const lx = W - m.right - 140, ly = m.top + 14;
     let lyOffset = 0;
 
@@ -753,10 +821,8 @@ function drawChart() {
 function startExperiment() {
     if (App.isRunning) return;
 
-    App.gravity   = parseFloat(el('gravitySelect').value);
-    App.compareMode = el('compareMode')?.checked || false;
-    App.camera    = { scale: 1, targetScale: 1, panY: 0, targetPanY: 0 };
-    App.plant     = new Plant(App.variety, App.gravity, App.lightDir);
+    App.camera = { scale: 1, targetScale: 1, panY: 0, targetPanY: 0 };
+    App.plant = new Plant(App.variety, App.gravity, App.lightDir);
     App.isRunning = true;
     App.isComplete = false;
     App.startTime = Date.now() - App.elapsedMs;
@@ -771,12 +837,10 @@ function startExperiment() {
 
     el('startExperiment').disabled = true;
     el('stopExperiment').disabled = false;
-    el('gravitySelect').disabled = true;
-    el('compareMode').disabled = true;
     document.querySelectorAll('.plant-card').forEach(c => c.disabled = true);
+    document.querySelectorAll('.gravity-btn').forEach(b => b.disabled = true);
 
-    const gLabel = el('gravitySelect').options[el('gravitySelect').selectedIndex].text;
-    logObs('Experiment started — ' + VARIETIES[App.variety].label + ', ' + gLabel);
+    logObs('Experiment started — ' + VARIETIES[App.variety].label + ', ' + (App.gravity === 1 ? 'Earth (1g)' : 'Microgravity (0g)'));
     animate();
 }
 
@@ -799,9 +863,8 @@ function resetExperiment() {
 
     el('startExperiment').disabled = false;
     el('stopExperiment').disabled = true;
-    el('gravitySelect').disabled = false;
-    el('compareMode').disabled = false;
     document.querySelectorAll('.plant-card').forEach(c => c.disabled = false);
+    document.querySelectorAll('.gravity-btn').forEach(b => b.disabled = false);
     el('elapsedTime').textContent = '0:00';
 
     setVal('stemLengthVal', '0 mm');
@@ -865,7 +928,7 @@ function updateLiveData() {
                 : ratio < 0.30 ? 'Early growth'
                 : ratio < 0.70 ? 'Rapid growth'
                 : ratio < 0.95 ? 'Maturation'
-                :                'Mature';
+                : 'Mature';
     const tropism = App.gravity === 0
         ? (App.lightDir !== 'none' ? 'Phototropism' : 'Undirected')
         : (App.lightDir !== 'none' ? 'Grav. + Photo.' : 'Gravitropism');
@@ -878,7 +941,7 @@ function updateLiveData() {
 }
 
 /* ============================================================
-   DATA RECORDING (NO ANGLE)
+   DATA RECORDING
    ============================================================ */
 function recordPoint() {
     if (!App.plant) return;
@@ -943,9 +1006,6 @@ function clearData() {
     }
 }
 
-/* ============================================================
-   OBSERVATION LOG
-   ============================================================ */
 function logObs(msg) {
     const log = el('observationsLog');
     const ph = log.querySelector('.initial');
@@ -996,9 +1056,17 @@ function setTheme(t) {
 function el(id) { return document.getElementById(id); }
 function setVal(id, v) { const e = el(id); if (e) e.textContent = v; }
 function fmtTime(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
-function dirToDeg(dir) { return { top: -90, bottom: 90, left: 180, right: 0 }[dir] ?? 0; }
-function angleDiff(a, b) { let d = a - b; while (d > 180) d -= 360; while (d < -180) d += 360; return d; }
-function collectPts(seg, out) { out.push({ x: seg.x, y: seg.y }, seg.tip()); seg.children.forEach(c => collectPts(c, out)); }
+function dirToRad(dir) { return { top: -Math.PI / 2, bottom: Math.PI / 2, left: Math.PI, right: 0 }[dir] ?? 0; }
+function angleDiff(a, b) {
+    let d = a - b;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    return d;
+}
+function collectPts(seg, out) {
+    out.push({ x: seg.x, y: seg.y }, { x: seg.endX, y: seg.endY });
+    seg.children.forEach(c => collectPts(c, out));
+}
 
 /* ============================================================
    BOOT
@@ -1018,8 +1086,24 @@ document.addEventListener('DOMContentLoaded', () => {
     el('exportCSV')?.addEventListener('click', exportData);
     el('clearData')?.addEventListener('click', clearData);
 
-    el('gravitySelect')?.addEventListener('change', e => {
-        App.gravity = parseFloat(e.target.value);
+    // Gravity button handlers — two separate interactive panels
+    document.querySelectorAll('.gravity-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const newGravity = parseFloat(this.dataset.gravity);
+            if (App.gravity !== newGravity) {
+                App.gravity = newGravity;
+                
+                // Update active button state
+                document.querySelectorAll('.gravity-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                
+                // Auto-enable comparison when microgravity is selected
+                // This allows user to see Earth vs Microgravity side-by-side
+                App.compareMode = (newGravity === 0);
+                
+                logObs('Gravity changed to: ' + (newGravity === 1 ? 'Earth (1g)' : 'Microgravity (0g)'));
+            }
+        });
     });
 
     // Plant card selection
