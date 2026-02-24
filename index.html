@@ -41,7 +41,7 @@
         <div class="container hero-content">
             <div class="hero-badge fade-in-delay-1">Educational Science Project</div>
             <h1 class="project-title fade-in-delay-2">Growing Plants in Simulated Microgravity</h1>
-            <p class="subtitle fade-in-delay-3">A Virtual Clinostat Experiment</p>
+            <p class="subtitle fade-in-delay-3">Realistic Tropism Physics</p>
             <div class="creator-hero fade-in-delay-4">Created by Tianlang Liu and Ken Yang</div>
             <div class="key-question fade-in-delay-5">
                 <strong>Central Question:</strong> How does the absence or reduction of gravity change
@@ -69,10 +69,11 @@
                     <div class="accordion-content">
                         <p><strong>Gravitropism</strong> is the directional growth of plants in response to gravity.
                         Roots exhibit <em>positive gravitropism</em> (growing toward gravity) while shoots exhibit
-                        <em>negative gravitropism</em> (growing away from gravity).</p>
+                        <em>negative gravitropism</em> (growing away from gravity). This occurs through differential
+                        cell elongation, not mechanical rotation.</p>
                         <div class="diagram-box">
                             <canvas id="gravitropismDiagram" width="600" height="300"></canvas>
-                            <p class="diagram-caption">Figure 1: Normal gravitropic response.</p>
+                            <p class="diagram-caption">Figure 1: Normal gravitropic response through differential growth.</p>
                         </div>
                     </div>
                 </div>
@@ -84,10 +85,12 @@
                     </button>
                     <div class="accordion-content">
                         <p>Plants detect gravity using specialised cells called <strong>statocytes</strong>, which
-                        contain dense starch-filled organelles called <strong>statoliths</strong>.</p>
+                        contain dense starch-filled organelles called <strong>statoliths</strong>. When statoliths
+                        settle, they trigger asymmetric auxin distribution, causing cells on one side to elongate
+                        faster than the other, producing curvature.</p>
                         <div class="diagram-box">
                             <canvas id="statocyteDiagram" width="600" height="350"></canvas>
-                            <p class="diagram-caption">Figure 2: Statoliths settle to the cell base.</p>
+                            <p class="diagram-caption">Figure 2: Statoliths settle and trigger auxin redistribution.</p>
                         </div>
                     </div>
                 </div>
@@ -98,10 +101,12 @@
                         <span class="accordion-icon">+</span>
                     </button>
                     <div class="accordion-content">
-                        <p><strong>Phototropism</strong> is directional growth in response to light.</p>
+                        <p><strong>Phototropism</strong> is directional growth in response to light. Phototropins
+                        detect blue light and trigger auxin redistribution to the shaded side, where cells elongate
+                        faster, bending the shoot toward the light source.</p>
                         <div class="diagram-box">
                             <canvas id="phototropismDiagram" width="600" height="250"></canvas>
-                            <p class="diagram-caption">Figure 3: Shoot bending toward light.</p>
+                            <p class="diagram-caption">Figure 3: Shoot bending toward light through differential elongation.</p>
                         </div>
                     </div>
                 </div>
@@ -116,7 +121,7 @@
     <section id="simulation" class="simulation-section">
         <div class="container">
             <h2 class="section-title">Interactive Plant Growth Simulation</h2>
-            <p class="section-intro">Select parameters and observe how tropisms interact to shape growth.</p>
+            <p class="section-intro">Select parameters and observe how tropisms interact to shape growth through differential cell elongation.</p>
 
             <div class="simulation-layout">
 
@@ -124,14 +129,27 @@
                 <div class="sim-controls-panel">
                     <h3>Experiment Controls</h3>
 
+                    <!-- Visual plant selection cards -->
                     <div class="control-group">
-                        <label for="plantVariety">Plant Variety</label>
-                        <select id="plantVariety" class="control-select">
-                            <option value="cress">Cress — fast, slender</option>
-                            <option value="bean">Bean — thick stem, broad leaves</option>
-                            <option value="arabidopsis">Arabidopsis — compact, branched</option>
-                            <option value="wheat">Wheat — narrow, upright</option>
-                        </select>
+                        <label class="control-label">Plant Variety</label>
+                        <div class="plant-cards">
+                            <button class="plant-card active" data-variety="cress">
+                                <div class="plant-card-name">Cress</div>
+                                <div class="plant-card-desc">Fast, slender</div>
+                            </button>
+                            <button class="plant-card" data-variety="bean">
+                                <div class="plant-card-name">Bean</div>
+                                <div class="plant-card-desc">Thick stem, broad leaves</div>
+                            </button>
+                            <button class="plant-card" data-variety="arabidopsis">
+                                <div class="plant-card-name">Arabidopsis</div>
+                                <div class="plant-card-desc">Compact, branched</div>
+                            </button>
+                            <button class="plant-card" data-variety="wheat">
+                                <div class="plant-card-name">Wheat</div>
+                                <div class="plant-card-desc">Narrow, upright</div>
+                            </button>
+                        </div>
                     </div>
 
                     <div class="control-group">
@@ -184,14 +202,15 @@
                 <div class="sim-visualization-panel">
                     <div class="clinostat-container">
                         <canvas id="clinostatCanvas"></canvas>
+                        <div class="zoom-hint">Scroll to zoom • Pinch to zoom on touch</div>
                     </div>
                     <div class="live-data-grid">
-                        <div class="data-box"><div class="data-label">Stem Angle</div><div class="data-value" id="stemAngleVal">—</div></div>
                         <div class="data-box"><div class="data-label">Stem Length</div><div class="data-value" id="stemLengthVal">0 mm</div></div>
                         <div class="data-box"><div class="data-label">Root Depth</div><div class="data-value" id="rootDepthVal">0 mm</div></div>
                         <div class="data-box"><div class="data-label">Branches</div><div class="data-value" id="branchCountVal">0</div></div>
                         <div class="data-box"><div class="data-label">Growth Phase</div><div class="data-value" id="growthPhaseVal">Germination</div></div>
                         <div class="data-box"><div class="data-label">Tropism</div><div class="data-value" id="tropismVal">—</div></div>
+                        <div class="data-box"><div class="data-label">Zoom</div><div class="data-value" id="zoomVal">100%</div></div>
                     </div>
                 </div>
 
@@ -227,10 +246,6 @@
                     <input type="checkbox" id="showRootDepth" checked>
                     <span>Root Depth</span>
                 </label>
-                <label class="checkbox-label">
-                    <input type="checkbox" id="showStemAngle">
-                    <span>Stem Angle</span>
-                </label>
             </div>
 
             <div class="chart-container">
@@ -251,14 +266,13 @@
                                 <th>Time (min)</th>
                                 <th>Variety</th>
                                 <th>Gravity</th>
-                                <th>Stem Angle (°)</th>
                                 <th>Stem Length (mm)</th>
                                 <th>Root Depth (mm)</th>
                                 <th>Branches</th>
                             </tr>
                         </thead>
                         <tbody id="dataTableBody">
-                            <tr><td colspan="7" class="empty-table">No data recorded yet.</td></tr>
+                            <tr><td colspan="6" class="empty-table">No data recorded yet.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -276,6 +290,4 @@
 
     <script src="script.js"></script>
 </body>
-
 </html>
-
