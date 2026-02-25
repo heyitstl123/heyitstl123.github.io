@@ -1,31 +1,9 @@
 /* ============================================================
-   GROWING PLANTS IN SIMULATED MICROGRAVITY — script.js
+   GROWING PLANTS IN SIMULATED MICROGRAVITY
    
-   CONTINUOUS PARENT-CHILD SEGMENT CHAIN MODEL
-   ============================================
-   
-   Structure:
-   - Each segment has a parent reference (except root segments)
-   - Position: computed from parent.endX, parent.endY (ensures continuity)
-   - Angle: cumulative from parent chain (parent.angle + this.angleOffset)
-   - No rigid rotation — curvature emerges from cumulative small angle offsets
-   
-   Growth Mechanism:
-   - Segments grow via logistic function: dL = r·L·(1 - L/K)
-   - Tropism forces adjust angleOffset by tiny amounts each frame (~0.0025)
-   - Gravitropism: shoots curve up (−π/2), roots curve down (π/2)
-   - Phototropism: shoots toward light, roots away from light
-   - Effects compound gradually over hundreds of frames
-   
-   Result: Smooth, biologically realistic curvature without visual breaks
-   
-   Features:
-   - Differential elongation (not rotation)
-   - Maturity-dependent tropism sensitivity
-   - Auto-stop at biological maximum size
-   - Smooth zoom (pinch + wheel)
-   - Visual plant selection cards
-   - Two-button gravity selector (Earth 1g / Microgravity 0g)
+   SEGMENT CHAIN MODEL — Curvature through incremental growth
+   Each new segment added at tip gets a small angle offset
+   Previous segments remain fixed — curvature accumulates
    ============================================================ */
 
 'use strict';
@@ -105,45 +83,41 @@ function hiDPI(canvas) {
 }
 
 /* ============================================================
-   SEGMENT — Parent-child linked chain with cumulative angles
-   Each segment inherits its start position from parent's endpoint.
-   Angle is cumulative: parent.angle + this.angleOffset
-   This creates a continuous, biologically realistic structure.
+   SEGMENT — Angle offset calculated ONCE at creation
+   Segments grow in length only. Angle never changes.
+   Chain of segments creates smooth cumulative curvature.
    ============================================================ */
 class Segment {
-    constructor(parent, isRoot, variety, generation = 0) {
+    constructor(parent, isRoot, variety, angleOffset = 0) {
         this.parent = parent;
         this.isRoot = isRoot;
         this.variety = variety;
-        this.generation = generation;
+        this.angleOffset = angleOffset;  // FIXED after creation
         
         const v = VARIETIES[variety];
-        const gf = Math.pow(0.62, generation);
-        const baseLen = isRoot ? v.maxRootLen : v.maxStemLen;
-        this.K = baseLen * gf * (0.85 + Math.random() * 0.30);
         
+        // Short segments create smoother curves
+        this.targetLength = isRoot ? 10 : 12;
         this.length = 0.1;
-        this.angleOffset = 0;  // Relative to parent (cumulative)
         this.growing = true;
         this.children = [];
-        this.branched = false;
         this.leafAt = [];
+        
+        const depth = this.getDepth();
+        const gf = Math.pow(0.62, depth);
         
         this.baseWidth = isRoot
             ? Math.max(v.rootWidth * gf, 0.5)
             : Math.max(v.stemWidth * gf, 0.7);
     }
 
-    // Computed angle — cumulative from entire parent chain
     get angle() {
         if (!this.parent) {
-            // Root segment: shoot points up (-π/2), root points down (π/2)
             return this.isRoot ? Math.PI / 2 : -Math.PI / 2;
         }
         return this.parent.angle + this.angleOffset;
     }
 
-    // Start position — exactly at parent's endpoint (ensures continuity)
     get x() {
         return this.parent ? this.parent.endX : 0;
     }
@@ -152,7 +126,6 @@ class Segment {
         return this.parent ? this.parent.endY : 0;
     }
 
-    // Endpoint of this segment
     get endX() {
         return this.x + this.length * Math.cos(this.angle);
     }
@@ -161,138 +134,113 @@ class Segment {
         return this.y + this.length * Math.sin(this.angle);
     }
 
-    grow(gravity, lightDir) {
+    getDepth() {
+        let depth = 0;
+        let p = this.parent;
+        while (p) { depth++; p = p.parent; }
+        return depth;
+    }
+
+    /* ----------------------------------------------------------
+       Grow in length. When target reached, create new tip segment.
+    ---------------------------------------------------------- */
+    grow(gravity, lightDir, totalLength, maxLength) {
         if (this.growing) {
             const v = VARIETIES[this.variety];
             const r = this.isRoot ? v.rootGrowthRate : v.growthRate;
-
-            // Logistic growth
-            const dL = r * this.length * (1 - this.length / this.K);
-            this.length = Math.min(this.length + dL, this.K);
-            if (this.length >= this.K * 0.995) this.growing = false;
-
-            // Apply tropism to primary axis only
-            if (this.generation === 0) {
-                this._adjustAngleOffset(gravity, lightDir);
+            
+            // Grow length
+            this.length += r * 2.5;
+            
+            // When full, create new segment at tip
+            if (this.length >= this.targetLength && this.children.length === 0) {
+                if (totalLength < maxLength) {
+                    this.growing = false;
+                    this._addTipSegment(gravity, lightDir);
+                } else {
+                    this.growing = false;
+                }
             }
-
-            // Leaf emergence
-            const spacing = v.leafSpacing + Math.random() * 6;
+            
+            // Leaves
+            const spacing = v.leafSpacing;
             const lastLeaf = this.leafAt[this.leafAt.length - 1] ?? 0;
             if (this.length - lastLeaf > spacing) {
                 this.leafAt.push(this.length);
             }
-
-            // Probabilistic branching
-            if (!this.branched && this.generation < 3 &&
-                this.length > this.K * 0.50 &&
-                Math.random() < v.branchChance * 0.012) {
-                this._branch(); this.branched = true;
-            }
         }
         
-        for (const c of this.children) c.grow(gravity, lightDir);
+        for (const c of this.children) {
+            c.grow(gravity, lightDir, totalLength, maxLength);
+        }
     }
 
     /* ----------------------------------------------------------
-       Adjust angleOffset incrementally based on tropism forces.
-       Very small changes accumulate gradually for smooth curves.
+       Create new tip segment with calculated angle offset.
+       This is where curvature happens — ONCE, at creation.
     ---------------------------------------------------------- */
-    _adjustAngleOffset(gravity, lightDir) {
-        const maturity = this.length / this.K;
+    _addTipSegment(gravity, lightDir) {
         const currentAngle = this.angle;
-
-        // Gravitropism: shoots grow up, roots grow down
-        let gravEffect = 0;
+        let offset = 0;
+        
+        // GRAVITROPISM — very strong for roots
         if (gravity > 0) {
-            const gravTarget = this.isRoot ? Math.PI / 2 : -Math.PI / 2;
-            const gravDiff = angleDiff(gravTarget, currentAngle);
-            const gravStrength = gravity * Math.max(1.2 - maturity * 0.75, 0.08);
-            gravEffect = gravDiff * gravStrength * 0.0025;  // Very gradual
+            const target = this.isRoot ? Math.PI / 2 : -Math.PI / 2;
+            const diff = angleDiff(target, currentAngle);
+            offset += diff * (this.isRoot ? 0.06 : 0.028);
         }
-
-        // Phototropism: shoots toward light, roots away from light
-        let photoEffect = 0;
-        if (lightDir !== 'none' && maturity > 0.12) {
+        
+        // PHOTOTROPISM — toward light
+        if (lightDir !== 'none') {
             const lightAngle = dirToRad(lightDir);
-            const photoTarget = this.isRoot ? lightAngle + Math.PI : lightAngle;
-            const photoDiff = angleDiff(photoTarget, currentAngle);
-            
-            const photoStrength = gravity === 0
-                ? 0.65   // Strong in microgravity
-                : 0.02 + maturity * 0.40;  // Increases with maturity
-            photoEffect = photoDiff * photoStrength * 0.0025;  // Very gradual
+            const target = this.isRoot ? lightAngle + Math.PI : lightAngle;
+            const diff = angleDiff(target, currentAngle);
+            offset += diff * (this.isRoot 
+                ? (gravity === 0 ? 0.020 : 0.010)
+                : (gravity === 0 ? 0.042 : 0.025));
         }
-
-        // Random walk in microgravity with no cues
-        let randomEffect = 0;
-        if (gravity === 0 && lightDir === 'none') {
-            randomEffect = (Math.random() - 0.5) * 0.0012;
-        }
-
-        // Cumulative very small adjustments for smooth curvature
-        this.angleOffset += gravEffect + photoEffect + randomEffect;
         
-        // Subtle organic micro-variation
-        this.angleOffset += (Math.random() - 0.5) * 0.0008;
-    }
-
-    _branch() {
-        const v = VARIETIES[this.variety];
-        const side = Math.random() < 0.5 ? 1 : -1;
-        // Branch angle in radians, starting with modest offset
-        const branchAngle = side * (v.branchSpread * 0.45 + Math.random() * v.branchSpread * 0.30) * Math.PI / 180;
+        // RANDOM VARIATION — key for zero-g curves
+        offset += (Math.random() - 0.5) * (gravity === 0
+            ? (this.isRoot ? 0.022 : 0.038)
+            : (this.isRoot ? 0.008 : 0.018));
         
-        const branch = new Segment(this, this.isRoot, this.variety, this.generation + 1);
-        branch.angleOffset = branchAngle;  // Initial offset from parent
-        this.children.push(branch);
-        
-        // Occasionally create opposite branch (for gen 0 only)
-        if (this.generation === 0 && Math.random() < 0.50) {
-            const branch2 = new Segment(this, this.isRoot, this.variety, this.generation + 1);
-            branch2.angleOffset = -branchAngle;  // Mirror angle
-            this.children.push(branch2);
-        }
+        this.children.push(new Segment(this, this.isRoot, this.variety, offset));
     }
 
     totalLength() {
         return this.length + this.children.reduce((s, c) => s + c.totalLength(), 0);
     }
 
-    branchCount() {
-        return this.children.length + this.children.reduce((s, c) => s + c.branchCount(), 0);
-    }
-
     isFullyGrown() {
-        return !this.growing && this.children.every(c => c.isFullyGrown());
+        if (this.growing) return false;
+        return this.children.every(c => c.isFullyGrown());
     }
 }
 
-/* ============================================================
-   PLANT — unified shoot and root from single seed point
-   Both structures share origin (0, 0) and form continuous chains.
-   ============================================================ */
 class Plant {
     constructor(variety, gravity, lightDir) {
         this.variety = variety;
         this.age = 0;
         
-        // Both shoot and root start at origin with parent = null
-        // This means they use their default base angles: shoot = -π/2 (up), root = π/2 (down)
-        this.shoot = new Segment(null, false, variety, 0);
-        this.root = new Segment(null, true, variety, 0);
+        const v = VARIETIES[variety];
+        this.maxShootLength = v.maxStemLen;
+        this.maxRootLength = v.maxRootLen;
         
-        // Add minimal initial angle variation (< 0.2 radians)
-        const jitter = (Math.random() - 0.5) * 0.18;
-        this.shoot.angleOffset = jitter;
-        this.root.angleOffset = jitter;
+        const jitter = (Math.random() - 0.5) * 0.08;
+        this.shoot = new Segment(null, false, variety, jitter);
+        this.root = new Segment(null, true, variety, jitter);
     }
 
     update(gravity, lightDir) {
         this.age++;
-        if (this.age < 8) return;  // Germination delay
-        this.shoot.grow(gravity, lightDir);
-        this.root.grow(gravity, lightDir);
+        if (this.age < 8) return;
+        
+        const shootLen = this.shoot.totalLength();
+        const rootLen = this.root.totalLength();
+        
+        this.shoot.grow(gravity, lightDir, shootLen, this.maxShootLength);
+        this.root.grow(gravity, lightDir, rootLen, this.maxRootLength);
     }
 
     bounds() {
@@ -301,8 +249,10 @@ class Plant {
         collectPts(this.root, pts);
         if (!pts.length) return { minX: -20, maxX: 20, minY: -20, maxY: 20 };
         return {
-            minX: Math.min(...pts.map(p => p.x)), maxX: Math.max(...pts.map(p => p.x)),
-            minY: Math.min(...pts.map(p => p.y)), maxY: Math.max(...pts.map(p => p.y)),
+            minX: Math.min(...pts.map(p => p.x)),
+            maxX: Math.max(...pts.map(p => p.x)),
+            minY: Math.min(...pts.map(p => p.y)),
+            maxY: Math.max(...pts.map(p => p.y)),
         };
     }
 
@@ -405,9 +355,6 @@ function initStarField() {
 
 function randBetween(a, b) { return a + Math.random() * (b - a); }
 
-/* ============================================================
-   ZOOM CONTROLS
-   ============================================================ */
 function initZoom() {
     const canvas = el('clinostatCanvas');
     if (!canvas) return;
@@ -444,9 +391,6 @@ function initZoom() {
     canvas.addEventListener('touchend', () => { touches = []; });
 }
 
-/* ============================================================
-   RENDERING
-   ============================================================ */
 function renderCanvas() {
     const canvas = el('clinostatCanvas');
     if (!canvas) return;
@@ -457,7 +401,6 @@ function renderCanvas() {
     ctx.fillStyle = isDark ? '#0f172a' : '#eef2f7';
     ctx.fillRect(0, 0, W, H);
 
-    // Grid
     ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.045)';
     ctx.lineWidth = 1;
     for (let gx = 0; gx < W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
@@ -494,7 +437,6 @@ function renderCanvas() {
         drawSegment(ctx, App.plant.shoot);
     }
 
-    // Seed
     ctx.fillStyle = '#c09050'; ctx.strokeStyle = '#7a5010'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.ellipse(0, 0, 10, 7, 0.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 
@@ -511,30 +453,24 @@ function drawSegment(ctx, seg) {
     const col = seg.isRoot ? v.rootColor : v.stemColor;
     const endW = Math.max(seg.baseWidth * 0.35, 0.4);
 
-    // Draw continuous tapered segment from (x, y) to (endX, endY)
-    // x, y is parent's endpoint; endX, endY is this segment's endpoint
-    const steps = Math.max(Math.floor(seg.length / 5), 3);  // More steps = smoother
+    const steps = Math.max(Math.floor(seg.length / 3), 2);
     for (let i = 0; i < steps; i++) {
         const t0 = i / steps, t1 = (i + 1) / steps;
-        
-        // Linear interpolation along the segment
         const x0 = seg.x + (seg.endX - seg.x) * t0;
         const y0 = seg.y + (seg.endY - seg.y) * t0;
         const x1 = seg.x + (seg.endX - seg.x) * t1;
         const y1 = seg.y + (seg.endY - seg.y) * t1;
         
-        // Taper from base width to end width
         ctx.strokeStyle = col;
         ctx.lineWidth = seg.baseWidth * (1 - t0) + endW * t0;
         ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';  // Smooth joins
+        ctx.lineJoin = 'round';
         ctx.beginPath();
         ctx.moveTo(x0, y0);
         ctx.lineTo(x1, y1);
         ctx.stroke();
     }
 
-    // Leaves positioned along the segment
     if (!seg.isRoot) {
         seg.leafAt.forEach((lp, idx) => {
             if (lp > seg.length) return;
@@ -545,8 +481,7 @@ function drawSegment(ctx, seg) {
         });
     }
 
-    // Root hairs
-    if (seg.isRoot && seg.generation === 0) {
+    if (seg.isRoot) {
         ctx.strokeStyle = v.rootColor + '70'; ctx.lineWidth = 0.6;
         for (let d = 12; d < seg.length; d += 13) {
             const t = d / seg.length;
@@ -560,7 +495,6 @@ function drawSegment(ctx, seg) {
         }
     }
 
-    // Recursively draw all children (which start at this segment's endpoint)
     for (const c of seg.children) drawSegment(ctx, c);
 }
 
@@ -626,9 +560,6 @@ function drawGravityArrow(ctx, W, H, g, isDark) {
     ctx.fillText('g = ' + g, ax, ay + len + 5);
 }
 
-/* ============================================================
-   DIAGRAMS
-   ============================================================ */
 function drawAllDiagrams() {
     diagramGravitropism();
     diagramStatocyte();
@@ -697,9 +628,6 @@ function diagramPhototropism() {
     ctx.textBaseline = 'top'; ctx.fillText('Phototropic response', W / 2, 8);
 }
 
-/* ============================================================
-   CHART
-   ============================================================ */
 function drawChart() {
     const canvas = el('growthChart');
     if (!canvas) return;
@@ -815,9 +743,6 @@ function drawChart() {
     }
 }
 
-/* ============================================================
-   EXPERIMENT LIFECYCLE
-   ============================================================ */
 function startExperiment() {
     if (App.isRunning) return;
 
@@ -922,12 +847,11 @@ function updateLiveData() {
     if (!App.plant) return;
     const stemLen = App.plant.shoot.totalLength().toFixed(1);
     const rootDep = App.plant.root.totalLength().toFixed(1);
-    const branches = App.plant.shoot.branchCount() + App.plant.root.branchCount();
-    const ratio = App.plant.shoot.length / App.plant.shoot.K;
+    const ratio = App.plant.shoot.length / App.plant.shoot.targetLength;
     const phase = ratio < 0.05 ? 'Germination'
-                : ratio < 0.30 ? 'Early growth'
-                : ratio < 0.70 ? 'Rapid growth'
-                : ratio < 0.95 ? 'Maturation'
+                : App.plant.shoot.totalLength() < 40 ? 'Early growth'
+                : App.plant.shoot.totalLength() < 120 ? 'Rapid growth'
+                : App.plant.shoot.totalLength() < 200 ? 'Maturation'
                 : 'Mature';
     const tropism = App.gravity === 0
         ? (App.lightDir !== 'none' ? 'Phototropism' : 'Undirected')
@@ -935,14 +859,11 @@ function updateLiveData() {
 
     setVal('stemLengthVal', stemLen + ' mm');
     setVal('rootDepthVal', rootDep + ' mm');
-    setVal('branchCountVal', branches);
+    setVal('branchCountVal', 0);
     setVal('growthPhaseVal', phase);
     setVal('tropismVal', tropism);
 }
 
-/* ============================================================
-   DATA RECORDING
-   ============================================================ */
 function recordPoint() {
     if (!App.plant) return;
     App.dataPoints.push({
@@ -952,7 +873,7 @@ function recordPoint() {
         light: App.lightDir,
         stemLen: parseFloat(App.plant.shoot.totalLength().toFixed(1)),
         rootDep: parseFloat(App.plant.root.totalLength().toFixed(1)),
-        branches: App.plant.shoot.branchCount()
+        branches: 0
     });
     updateTable(); drawChart();
 }
@@ -1017,9 +938,6 @@ function logObs(msg) {
     log.scrollTop = log.scrollHeight;
 }
 
-/* ============================================================
-   ACCORDION
-   ============================================================ */
 function initAccordion() {
     document.querySelectorAll('.accordion-header').forEach(h => {
         h.addEventListener('click', () => {
@@ -1031,9 +949,6 @@ function initAccordion() {
     });
 }
 
-/* ============================================================
-   THEME
-   ============================================================ */
 function initTheme() {
     setTheme(localStorage.getItem('theme') || 'light');
     el('themeToggle')?.addEventListener('click', () =>
@@ -1050,9 +965,6 @@ function setTheme(t) {
     drawChart(); renderCanvas(); drawAllDiagrams();
 }
 
-/* ============================================================
-   UTILITIES
-   ============================================================ */
 function el(id) { return document.getElementById(id); }
 function setVal(id, v) { const e = el(id); if (e) e.textContent = v; }
 function fmtTime(ms) { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
@@ -1068,9 +980,6 @@ function collectPts(seg, out) {
     seg.children.forEach(c => collectPts(c, out));
 }
 
-/* ============================================================
-   BOOT
-   ============================================================ */
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initAccordion();
@@ -1086,27 +995,19 @@ document.addEventListener('DOMContentLoaded', () => {
     el('exportCSV')?.addEventListener('click', exportData);
     el('clearData')?.addEventListener('click', clearData);
 
-    // Gravity button handlers — two separate interactive panels
     document.querySelectorAll('.gravity-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const newGravity = parseFloat(this.dataset.gravity);
             if (App.gravity !== newGravity) {
                 App.gravity = newGravity;
-                
-                // Update active button state
                 document.querySelectorAll('.gravity-btn').forEach(b => b.classList.remove('active'));
                 this.classList.add('active');
-                
-                // Auto-enable comparison when microgravity is selected
-                // This allows user to see Earth vs Microgravity side-by-side
                 App.compareMode = (newGravity === 0);
-                
                 logObs('Gravity changed to: ' + (newGravity === 1 ? 'Earth (1g)' : 'Microgravity (0g)'));
             }
         });
     });
 
-    // Plant card selection
     document.querySelectorAll('.plant-card').forEach(card => {
         card.addEventListener('click', function() {
             document.querySelectorAll('.plant-card').forEach(c => c.classList.remove('active'));
@@ -1126,7 +1027,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Chart toggles
     el('showStemLength')?.addEventListener('change', e => {
         App.chartToggles.stemLength = e.target.checked; drawChart();
     });
@@ -1134,7 +1034,6 @@ document.addEventListener('DOMContentLoaded', () => {
         App.chartToggles.rootDepth = e.target.checked; drawChart();
     });
 
-    // Smooth nav scroll
     document.querySelectorAll('.nav-links a').forEach(a => {
         a.addEventListener('click', e => {
             e.preventDefault();
@@ -1142,7 +1041,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Redraw on resize
     let resizeTimer;
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
