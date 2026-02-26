@@ -4,6 +4,32 @@
    SEGMENT CHAIN MODEL — Curvature through incremental growth
    Each new segment added at tip gets a small angle offset
    Previous segments remain fixed — curvature accumulates
+   
+   VISUAL ENHANCEMENTS (New):
+   ===========================
+   1. LEAVES:
+      - Added at regular intervals (8-12 pixels) along stem
+      - Alternate sides for natural appearance
+      - Size varies (0.7-1.3x base) and scales with depth
+      - Natural droop angle (15-25°) for realism
+   
+   2. BRANCHES:
+      - Occasional branching (15% chance per frame when mature)
+      - Emerge at 25-45° angles from parent stem
+      - Grow at 70% speed of main stem
+      - Limited depth (max 5 levels) to prevent overpopulation
+   
+   3. VISUAL DETAILS:
+      - Gradual stem tapering (base → tip)
+      - Branches are thinner (70% width) than main stem
+      - Leaf central vein for detail
+      - Random variation in leaf angles and sizes
+      - Root hairs remain on primary roots only
+   
+   PERFORMANCE:
+   - Efficient recursive rendering
+   - Minimal overhead from leaf/branch tracking
+   - No heavy operations; maintains smooth animation
    ============================================================ */
 
 'use strict';
@@ -86,13 +112,19 @@ function hiDPI(canvas) {
    SEGMENT — Angle offset calculated ONCE at creation
    Segments grow in length only. Angle never changes.
    Chain of segments creates smooth cumulative curvature.
+   
+   VISUAL ENHANCEMENTS:
+   - Leaves added at regular intervals (alternating sides)
+   - Occasional branching at mature segments
+   - Gradual stem tapering based on position in chain
    ============================================================ */
 class Segment {
-    constructor(parent, isRoot, variety, angleOffset = 0) {
+    constructor(parent, isRoot, variety, angleOffset = 0, isBranch = false) {
         this.parent = parent;
         this.isRoot = isRoot;
         this.variety = variety;
         this.angleOffset = angleOffset;  // FIXED after creation
+        this.isBranch = isBranch;  // Branches grow slower
         
         const v = VARIETIES[variety];
         
@@ -101,14 +133,25 @@ class Segment {
         this.length = 0.1;
         this.growing = true;
         this.children = [];
-        this.leafAt = [];
+        
+        // Leaf system: track leaves with side info for alternating pattern
+        this.leaves = [];  // Array of {position, side, size}
+        this.nextLeafSide = Math.random() < 0.5 ? 1 : -1;  // Start random
+        
+        // Branching control
+        this.hasBranched = false;
         
         const depth = this.getDepth();
         const gf = Math.pow(0.62, depth);
         
-        this.baseWidth = isRoot
-            ? Math.max(v.rootWidth * gf, 0.5)
-            : Math.max(v.stemWidth * gf, 0.7);
+        // Gradual width tapering based on depth in chain
+        const baseFactor = isRoot ? v.rootWidth : v.stemWidth;
+        this.baseWidth = Math.max(baseFactor * gf, 0.5);
+        
+        // Additional width reduction for branches
+        if (isBranch) {
+            this.baseWidth *= 0.7;
+        }
     }
 
     get angle() {
@@ -143,14 +186,48 @@ class Segment {
 
     /* ----------------------------------------------------------
        Grow in length. When target reached, create new tip segment.
+       Add leaves at intervals and occasionally create branches.
     ---------------------------------------------------------- */
     grow(gravity, lightDir, totalLength, maxLength) {
         if (this.growing) {
             const v = VARIETIES[this.variety];
             const r = this.isRoot ? v.rootGrowthRate : v.growthRate;
             
+            // Branches grow at 70% speed of main stem
+            const growthMultiplier = this.isBranch ? 0.7 : 1.0;
+            
             // Grow length
-            this.length += r * 2.5;
+            this.length += r * 2.5 * growthMultiplier;
+            
+            // Add leaves at intervals (shoots only, not roots or branches)
+            if (!this.isRoot && !this.isBranch && this.length > 3) {
+                const leafInterval = 8 + Math.random() * 4;  // 8-12 pixel spacing
+                const lastLeafPos = this.leaves.length > 0 
+                    ? this.leaves[this.leaves.length - 1].position 
+                    : 0;
+                
+                if (this.length - lastLeafPos > leafInterval) {
+                    // Add alternating leaf
+                    const side = this.nextLeafSide;
+                    const size = 0.7 + Math.random() * 0.6;  // Variation 0.7-1.3
+                    this.leaves.push({
+                        position: this.length,
+                        side: side,
+                        size: size
+                    });
+                    this.nextLeafSide *= -1;  // Alternate for next leaf
+                }
+            }
+            
+            // Occasional branching (shoots only, when mature enough)
+            if (!this.isRoot && !this.isBranch && !this.hasBranched && 
+                this.length > this.targetLength * 0.6 && 
+                this.getDepth() < 5 &&  // Don't branch too deep
+                Math.random() < 0.15) {  // 15% chance per frame
+                
+                this._createBranch(gravity, lightDir);
+                this.hasBranched = true;
+            }
             
             // When full, create new segment at tip
             if (this.length >= this.targetLength && this.children.length === 0) {
@@ -160,13 +237,6 @@ class Segment {
                 } else {
                     this.growing = false;
                 }
-            }
-            
-            // Leaves
-            const spacing = v.leafSpacing;
-            const lastLeaf = this.leafAt[this.leafAt.length - 1] ?? 0;
-            if (this.length - lastLeaf > spacing) {
-                this.leafAt.push(this.length);
             }
         }
         
@@ -205,7 +275,23 @@ class Segment {
             ? (this.isRoot ? 0.022 : 0.038)
             : (this.isRoot ? 0.008 : 0.018));
         
-        this.children.push(new Segment(this, this.isRoot, this.variety, offset));
+        this.children.push(new Segment(this, this.isRoot, this.variety, offset, this.isBranch));
+    }
+
+    /* ----------------------------------------------------------
+       Create a branch segment at current position.
+       Branch grows at reduced rate and different angle.
+    ---------------------------------------------------------- */
+    _createBranch(gravity, lightDir) {
+        const v = VARIETIES[this.variety];
+        
+        // Branch angle: 25-45 degrees from parent
+        const branchSide = Math.random() < 0.5 ? 1 : -1;
+        const branchAngle = branchSide * (0.4 + Math.random() * 0.35);  // 0.4-0.75 radians (23-43°)
+        
+        // Create branch segment (marked as branch for slower growth)
+        const branch = new Segment(this, false, this.variety, branchAngle, true);
+        this.children.push(branch);
     }
 
     totalLength() {
@@ -451,8 +537,11 @@ function drawSegment(ctx, seg) {
     if (seg.length < 1) return;
     const v = VARIETIES[seg.variety];
     const col = seg.isRoot ? v.rootColor : v.stemColor;
-    const endW = Math.max(seg.baseWidth * 0.35, 0.4);
+    
+    // Gradual tapering: thicker at base, thinner at tip
+    const endW = Math.max(seg.baseWidth * 0.4, 0.5);
 
+    // Draw smooth tapered segment with subtle curvature
     const steps = Math.max(Math.floor(seg.length / 3), 2);
     for (let i = 0; i < steps; i++) {
         const t0 = i / steps, t1 = (i + 1) / steps;
@@ -461,8 +550,11 @@ function drawSegment(ctx, seg) {
         const x1 = seg.x + (seg.endX - seg.x) * t1;
         const y1 = seg.y + (seg.endY - seg.y) * t1;
         
+        // Width tapers smoothly from base to tip
+        const w = seg.baseWidth * (1 - t0) + endW * t0;
+        
         ctx.strokeStyle = col;
-        ctx.lineWidth = seg.baseWidth * (1 - t0) + endW * t0;
+        ctx.lineWidth = w;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.beginPath();
@@ -471,45 +563,102 @@ function drawSegment(ctx, seg) {
         ctx.stroke();
     }
 
-    if (!seg.isRoot) {
-        seg.leafAt.forEach((lp, idx) => {
-            if (lp > seg.length) return;
-            const t = lp / seg.length;
+    // Render leaves along the stem (shoots only)
+    if (!seg.isRoot && seg.leaves.length > 0) {
+        seg.leaves.forEach((leaf, idx) => {
+            if (leaf.position > seg.length) return;
+            
+            const t = leaf.position / seg.length;
             const lx = seg.x + (seg.endX - seg.x) * t;
             const ly = seg.y + (seg.endY - seg.y) * t;
-            drawLeaf(ctx, lx, ly, seg.angle * 180 / Math.PI, idx % 2 === 0 ? 1 : -1, v);
+            
+            // Leaf size scales with segment depth (deeper = smaller)
+            const depthFactor = Math.max(1.0 - seg.getDepth() * 0.15, 0.4);
+            const leafSize = leaf.size * depthFactor;
+            
+            drawLeaf(ctx, lx, ly, seg.angle * 180 / Math.PI, leaf.side, v, leafSize);
         });
     }
 
-    if (seg.isRoot) {
-        ctx.strokeStyle = v.rootColor + '70'; ctx.lineWidth = 0.6;
+    // Root hairs (fine details for roots)
+    if (seg.isRoot && !seg.isBranch) {
+        ctx.strokeStyle = v.rootColor + '70'; 
+        ctx.lineWidth = 0.6;
         for (let d = 12; d < seg.length; d += 13) {
             const t = d / seg.length;
             const hx = seg.x + (seg.endX - seg.x) * t;
             const hy = seg.y + (seg.endY - seg.y) * t;
             for (const s of [1, -1]) {
                 const ha = seg.angle + s * (Math.PI / 2 + (Math.random() - 0.5) * 0.3);
-                ctx.beginPath(); ctx.moveTo(hx, hy);
-                ctx.lineTo(hx + Math.cos(ha) * 6, hy + Math.sin(ha) * 6); ctx.stroke();
+                ctx.beginPath(); 
+                ctx.moveTo(hx, hy);
+                ctx.lineTo(hx + Math.cos(ha) * 6, hy + Math.sin(ha) * 6); 
+                ctx.stroke();
             }
         }
     }
 
+    // Recursively draw all child segments (continuation and branches)
     for (const c of seg.children) drawSegment(ctx, c);
 }
 
-function drawLeaf(ctx, x, y, angleDeg, side, v) {
-    const la = (angleDeg + side * 72) * Math.PI / 180;
-    const ls = v.leafScale;
-    let rx, ry;
-    if (v.leafShape === 'broad') { rx = ls * 13; ry = ls * 6.5; }
-    else if (v.leafShape === 'narrow') { rx = ls * 19; ry = ls * 3.2; }
-    else if (v.leafShape === 'lance') { rx = ls * 11; ry = ls * 4.0; }
-    else { rx = ls * 10; ry = ls * 5.5; }
-    ctx.fillStyle = v.leafColor; ctx.strokeStyle = v.stemColor + '99'; ctx.lineWidth = 0.6;
+/* ----------------------------------------------------------
+   Draw a single leaf with natural variation.
+   Leaves alternate sides and have subtle angle/size variation.
+---------------------------------------------------------- */
+function drawLeaf(ctx, x, y, stemAngleDeg, side, v, sizeMultiplier = 1.0) {
+    // Base leaf angle: perpendicular to stem + slight droop + random variation
+    const baseAngle = stemAngleDeg + side * (85 + Math.random() * 10);  // 85-95° from stem
+    const droop = 15 + Math.random() * 10;  // 15-25° droop for natural look
+    const leafAngle = (baseAngle + droop * side) * Math.PI / 180;
+    
+    // Leaf dimensions based on variety and size multiplier
+    const ls = v.leafScale * sizeMultiplier;
+    let length, width;
+    
+    if (v.leafShape === 'broad') { 
+        length = ls * 12; 
+        width = ls * 7; 
+    } else if (v.leafShape === 'narrow') { 
+        length = ls * 16; 
+        width = ls * 3.5; 
+    } else if (v.leafShape === 'lance') { 
+        length = ls * 10; 
+        width = ls * 4.5; 
+    } else { 
+        length = ls * 9; 
+        width = ls * 5; 
+    }
+    
+    // Leaf position (offset from stem)
+    const leafX = x + Math.cos(leafAngle) * length * 0.5;
+    const leafY = y + Math.sin(leafAngle) * length * 0.5;
+    
+    // Draw leaf as filled ellipse with subtle gradient
+    ctx.save();
+    ctx.translate(leafX, leafY);
+    ctx.rotate(leafAngle);
+    
+    // Leaf fill
+    ctx.fillStyle = v.leafColor;
     ctx.beginPath();
-    ctx.ellipse(x + Math.cos(la) * rx * 0.65, y + Math.sin(la) * ry * 0.65, rx, ry, la, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
+    ctx.ellipse(0, 0, length * 0.5, width * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Leaf outline (subtle)
+    ctx.strokeStyle = v.stemColor + '99';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    
+    // Central vein
+    ctx.strokeStyle = v.stemColor + 'AA';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(-length * 0.5, 0);
+    ctx.lineTo(length * 0.5, 0);
+    ctx.stroke();
+    
+    ctx.restore();
 }
 
 function drawLightOverlay(ctx, W, H, dir) {
@@ -847,6 +996,18 @@ function updateLiveData() {
     if (!App.plant) return;
     const stemLen = App.plant.shoot.totalLength().toFixed(1);
     const rootDep = App.plant.root.totalLength().toFixed(1);
+    
+    // Count branches recursively
+    const countBranches = (seg) => {
+        let count = 0;
+        for (const child of seg.children) {
+            if (child.isBranch) count++;
+            count += countBranches(child);
+        }
+        return count;
+    };
+    const branches = countBranches(App.plant.shoot);
+    
     const ratio = App.plant.shoot.length / App.plant.shoot.targetLength;
     const phase = ratio < 0.05 ? 'Germination'
                 : App.plant.shoot.totalLength() < 40 ? 'Early growth'
@@ -859,13 +1020,24 @@ function updateLiveData() {
 
     setVal('stemLengthVal', stemLen + ' mm');
     setVal('rootDepthVal', rootDep + ' mm');
-    setVal('branchCountVal', 0);
+    setVal('branchCountVal', branches);
     setVal('growthPhaseVal', phase);
     setVal('tropismVal', tropism);
 }
 
 function recordPoint() {
     if (!App.plant) return;
+    
+    // Count branches recursively
+    const countBranches = (seg) => {
+        let count = 0;
+        for (const child of seg.children) {
+            if (child.isBranch) count++;
+            count += countBranches(child);
+        }
+        return count;
+    };
+    
     App.dataPoints.push({
         time: App.elapsedMs / 60000,
         variety: App.variety,
@@ -873,7 +1045,7 @@ function recordPoint() {
         light: App.lightDir,
         stemLen: parseFloat(App.plant.shoot.totalLength().toFixed(1)),
         rootDep: parseFloat(App.plant.root.totalLength().toFixed(1)),
-        branches: 0
+        branches: countBranches(App.plant.shoot)
     });
     updateTable(); drawChart();
 }
